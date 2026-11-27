@@ -1,6 +1,7 @@
 """Orchestrateur BOD Perso, piloté par la variable STAGE (ou --stage).
 
 Étapes : init | collect | cluster | opportunities | simulate | serp | all
+  - status        : diagnostic gratuit (comptes par table, raisons de filtrage)
   - init          : crée le dataset, les tables (sql/schema.sql) et les vues (sql/views.sql)
   - collect       : DataForSEO -> GCS brut -> bod.keywords_raw            (payant, plafonné)
   - cluster       : embeddings Vertex AI + HDBSCAN -> clusters / cluster_keywords
@@ -28,7 +29,7 @@ from pathlib import Path
 
 from app.config import get_settings
 
-STAGES = ("init", "collect", "cluster", "opportunities", "simulate", "serp", "all")
+STAGES = ("init", "status", "collect", "cluster", "opportunities", "simulate", "serp", "all")
 ALL_SEQUENCE = ("collect", "cluster", "opportunities", "simulate", "serp")
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
 
@@ -74,9 +75,49 @@ def stage_init() -> None:
         log.info("init.sql_applied", extra={"file": name})
 
 
+STATUS_SQL = """
+SELECT 'keywords_raw' AS t, COUNT(*) AS n FROM bod.keywords_raw WHERE country_code IN UNNEST(@c)
+UNION ALL SELECT 'clusters', COUNT(*) FROM bod.clusters WHERE country_code IN UNNEST(@c)
+UNION ALL SELECT 'cluster_keywords', COUNT(*) FROM bod.cluster_keywords WHERE country_code IN UNNEST(@c)
+UNION ALL SELECT 'opportunities', COUNT(*) FROM bod.opportunities WHERE country_code IN UNNEST(@c)
+UNION ALL SELECT 'opportunity_scores', COUNT(*) FROM bod.opportunity_scores WHERE country_code IN UNNEST(@c)
+UNION ALL SELECT 'scenarios', COUNT(*) FROM bod.scenarios
+UNION ALL SELECT 'v_opportunities_ranked', COUNT(*) FROM bod.v_opportunities_ranked WHERE country_code IN UNNEST(@c)
+"""
+
+INTENT_SQL = """
+SELECT IFNULL(intent, '(vide)') AS intent, COUNT(*) AS n,
+       COUNTIF(IFNULL(cpc, 0) > 0) AS with_cpc,
+       COUNTIF(IFNULL(search_volume, 0) > 0) AS with_volume
+FROM bod.keywords_raw WHERE country_code IN UNNEST(@c)
+GROUP BY 1 ORDER BY n DESC
+"""
+
+
+def stage_status(markets: list[str]) -> dict:
+    """Diagnostic sans coût API : où le pipeline s'arrête-t-il ?"""
+    from app.bq import query
+    from app.cluster import KEYWORDS_SQL, filter_keywords
+
+    s = get_settings()
+    counts = {r["t"]: int(r["n"]) for r in query(STATUS_SQL, {"c": markets}).to_dict("records")}
+    intents = query(INTENT_SQL, {"c": markets}).to_dict("records")
+    kept = {}
+    for c in markets:
+        raw = query(KEYWORDS_SQL, {"days": s.keyword_lookback_days, "country": c})
+        kept[c] = {"recent_keywords": len(raw), "kept_for_clustering": len(filter_keywords(
+            raw, exclude_terms=s.exclude_terms, include_informational=s.include_informational,
+            keep_unknown_intent=s.keep_unknown_intent))}
+    out = {"tables": counts, "intents": intents, "filter": kept, "min_cluster_size": s.min_cluster_size}
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return out
+
+
 def run(stage: str, markets: list[str] | None, max_cost_usd: float | None, run_id: str) -> dict:
     s = get_settings()
     s.require_project()
+    if stage == "status":
+        return stage_status(markets or s.active_markets)
     if stage == "init":
         stage_init()
         return {"init": "ok"}

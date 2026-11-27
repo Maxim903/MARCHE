@@ -232,22 +232,26 @@ def run(markets: list[str] | None = None, run_id: str | None = None) -> int:
         {"countries": list(markets or s.active_markets), "limit": s.max_clusters_for_llm},
     )
     if clusters.empty:
-        log.info("opportunities.nothing_to_do")
+        log.warning("opportunities.nothing_to_do",
+                    extra={"hint": "aucun cluster nouveau : lance d'abord --stage cluster (voir --stage status)"})
         return 0
 
     client = _client()
     rows: list[dict] = []
     raw_log: list[dict] = []
     failures = 0
+    first_error = None
     for cluster in clusters.to_dict("records"):
         try:
             result, raw_text = build_opportunity(client, cluster, s.gemini_model)
         except (ValidationError, ValueError) as exc:
             failures += 1
+            first_error = first_error or f"sortie invalide : {exc}"[:500]
             log.warning("opportunities.invalid_output", extra={"cluster_id": cluster["cluster_id"], "error": str(exc)[:300]})
             continue
         except Exception as exc:  # quota, réseau… on n'arrête pas tout le lot
             failures += 1
+            first_error = first_error or f"appel Gemini : {exc}"[:500]
             log.warning("opportunities.call_failed", extra={"cluster_id": cluster["cluster_id"], "error": str(exc)[:300]})
             continue
         now = utcnow().isoformat()
@@ -259,5 +263,7 @@ def run(markets: list[str] | None = None, run_id: str | None = None) -> int:
         upload_json(f"raw/gemini.opportunities/{utcnow().date().isoformat()}/{run_id}.json", raw_log,
                     {"run_id": run_id, "model": s.gemini_model})
     n = load_rows("opportunities", rows)
-    log.info("opportunities.done", extra={"clusters": len(clusters), "rows": n, "failures": failures})
+    log.log(logging.ERROR if failures and not n else logging.INFO, "opportunities.done",
+            extra={"clusters": len(clusters), "rows": n, "failures": failures, "first_error": first_error,
+                   "model": s.gemini_model, "vertex_location": s.vertex_location})
     return n

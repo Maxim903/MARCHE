@@ -48,6 +48,7 @@ def filter_keywords(
     *,
     exclude_terms: list[str],
     include_informational: bool = False,
+    keep_unknown_intent: bool = True,
 ) -> pd.DataFrame:
     if df.empty:
         return df
@@ -60,7 +61,11 @@ def filter_keywords(
         pattern = r"\b(?:" + "|".join(re.escape(t.lower()) for t in exclude_terms) + r")\b"
         out = out[~out["keyword"].str.contains(pattern, regex=True)]
     keep = set(COMMERCIAL_INTENTS) | ({"informational"} if include_informational else set())
-    out = out[out["intent"].fillna("").str.lower().isin(keep)]
+    intent = out["intent"].fillna("").str.lower()
+    # Intention absente (non renvoyée par l'API) : conservée par défaut, sinon tout
+    # un lot peut disparaître. Les intentions informationnelles/navigationnelles
+    # explicites restent exclues.
+    out = out[intent.isin(keep) | ((intent == "") & keep_unknown_intent)]
     return out.reset_index(drop=True)
 
 
@@ -137,7 +142,8 @@ def run_market(country: str, run_id: str) -> int:
     s = get_settings()
     _, lang = MARKETS[country]
     raw = query(KEYWORDS_SQL, {"days": s.keyword_lookback_days, "country": country})
-    df = filter_keywords(raw, exclude_terms=s.exclude_terms, include_informational=s.include_informational)
+    df = filter_keywords(raw, exclude_terms=s.exclude_terms, include_informational=s.include_informational,
+                         keep_unknown_intent=s.keep_unknown_intent)
     if len(df) > s.max_keywords_to_embed:  # garde-fou coût Vertex
         df = df.nlargest(s.max_keywords_to_embed, "search_volume")
     log.info("cluster.input", extra={"country": country, "raw": len(raw), "kept": len(df)})

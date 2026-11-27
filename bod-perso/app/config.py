@@ -180,6 +180,7 @@ class Settings:
     fill_missing_intent: bool
     keyword_lookback_days: int
     include_informational: bool
+    keep_unknown_intent: bool
     exclude_terms: list[str]
     min_cluster_size: int
     max_keywords_to_embed: int
@@ -248,6 +249,7 @@ def get_settings() -> Settings:
         fill_missing_intent=_env_bool("FILL_MISSING_INTENT", False),
         keyword_lookback_days=_env_int("KEYWORD_LOOKBACK_DAYS", 35),
         include_informational=_env_bool("INCLUDE_INFORMATIONAL", False),
+        keep_unknown_intent=_env_bool("KEEP_UNKNOWN_INTENT", True),
         exclude_terms=_env_list("EXCLUDE_TERMS", DEFAULT_EXCLUDE_TERMS),
         min_cluster_size=_env_int("MIN_CLUSTER_SIZE", 8),
         max_keywords_to_embed=_env_int("MAX_KEYWORDS_TO_EMBED", 20000),
