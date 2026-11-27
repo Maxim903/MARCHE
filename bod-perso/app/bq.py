@@ -168,6 +168,19 @@ def raw_blob_path(endpoint: str, batch_id: str, day: dt.date | None = None) -> s
     return f"raw/{endpoint_slug(endpoint)}/{day.isoformat()}/{batch_id}.json"
 
 
+def ensure_raw_bucket() -> str:
+    """Vérifie que le bucket des réponses brutes existe AVANT toute dépense API."""
+    s = get_settings()
+    name = s.bucket
+    if gcs_client().lookup_bucket(name) is None:
+        raise RuntimeError(
+            f"Le bucket gs://{name} n'existe pas : les réponses brutes ne pourraient pas être "
+            f"sauvegardées. Crée-le avant de relancer :\n"
+            f"  gcloud storage buckets create gs://{name} --location={s.region}"
+        )
+    return name
+
+
 def upload_json(blob_path: str, obj: Any, metadata: dict[str, str] | None = None) -> str:
     bucket = get_settings().bucket
     blob = gcs_client().bucket(bucket).blob(blob_path)

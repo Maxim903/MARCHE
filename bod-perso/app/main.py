@@ -84,8 +84,10 @@ def run(stage: str, markets: list[str] | None, max_cost_usd: float | None, run_i
     sequence = ALL_SEQUENCE if stage == "all" else (stage,)
     api = None
     if {"collect", "serp"} & set(sequence):
+        from app.bq import ensure_raw_bucket
         from app.dataforseo_client import DataForSEO
 
+        ensure_raw_bucket()  # aucun appel payant sans stockage brut
         api = DataForSEO(max_cost_usd=max_cost_usd, run_id=run_id, stage=stage)
 
     summary: dict = {"run_id": run_id, "stage": stage}
